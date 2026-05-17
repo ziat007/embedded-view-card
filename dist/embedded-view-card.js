@@ -17,7 +17,7 @@ class EmbeddedViewCard extends HTMLElement {
     this._activeViewElement = null;
 
     // initialize caches
-    this._resolved = { view: undefined, dashboard: undefined };
+    this._resolved = { view: undefined, dashboard: undefined, hash: undefined };
     this._waitingForRoot = false;
     this._wsConfigCache = {};
 
@@ -26,13 +26,32 @@ class EmbeddedViewCard extends HTMLElement {
     this._container.style.display = "contents";
     this._inner = document.createElement("div");
     this._inner.style.margin = "0";
+
+    // hash mode handler
+    this._onHashChange = this._onHashChange.bind(this);
+  }
+
+
+  connectedCallback() {
+    window.addEventListener("hashchange", this._onHashChange);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener("hashchange", this._onHashChange);
+  }
+
+  _onHashChange() {
+    if (this._config.mode === "hash") {
+      this._resolved.hash = undefined;
+      this.hass = this._hass;
+    }
   }
 
 
   // applies user configuration, sets defaults, and builds the initial DOM structure
   setConfig(config) {
     this._config = {
-      mode: "static",               // mode: static or dynamic
+      mode: "static",               // mode: static, dynamic, or hash
 
       // static mode
       dashboard: undefined,         // dashboard  (empty or undefined => current)
@@ -42,6 +61,10 @@ class EmbeddedViewCard extends HTMLElement {
       // dynamic mode
       target_entity: undefined,     // entity whose state is "dashboard/view"
       view_path_entity: undefined,  // legacy fallback (read-only)
+
+      // hash mode
+      default: undefined,           // fallback hash value
+      states: {},                   // map of hash -> { dashboard, view }
 
       // style
       ha_card: true,
@@ -104,11 +127,12 @@ class EmbeddedViewCard extends HTMLElement {
     const currentView = i >= 0 && segments[i + 1] ? decodeURIComponent(segments[i + 1]) : null; 
 
     // resolve target (dashboard + view) by mode
-    const mode = this._config.mode === "dynamic" ? "dynamic" : "static";
+    const mode = this._config.mode === "dynamic" ? "dynamic" : this._config.mode === "hash" ? "hash" : "static";
 
     let effectiveDashboard = null;
     let effectiveView = null;
     let external = false;
+    let currentHash = "";
 
     // wait for current dashboard
     if (!currentDashboard) {
@@ -121,7 +145,43 @@ class EmbeddedViewCard extends HTMLElement {
       return;
     }
 
-    if (mode === "dynamic") {
+    if (mode === "hash") {
+      // hash mode -> read URL hash, match against states map
+      currentHash = window.location.hash.replace(/^#/, "") || this._config.default || "";
+
+      if (!currentHash) {
+        if (this._resolved.view !== "__error_hash__") {
+          this._resolved.view = "__error_hash__";
+          this._showError(this._t("Missing configuration") + ": no URL hash and no default value");
+        }
+        return;
+      }
+
+      const states = this._config.states || {};
+      const stateConfig = states[currentHash];
+
+      if (!stateConfig) {
+        if (this._resolved.view !== "__error_hash__") {
+          this._resolved.view = "__error_hash__";
+          this._showError(this._t("No matching state for hash") + ": " + currentHash);
+        }
+        return;
+      }
+
+      effectiveView = stateConfig.view;
+      if (!effectiveView) {
+        if (this._resolved.view !== "__error_hash__") {
+          this._resolved.view = "__error_hash__";
+          this._showError(this._t("Missing configuration") + ": no view for hash \"" + currentHash + "\"");
+        }
+        return;
+      }
+
+      effectiveDashboard = stateConfig.dashboard || currentDashboard || null;
+      external = Boolean(effectiveDashboard && currentDashboard && (effectiveDashboard !== currentDashboard));
+    } 
+    
+    else if (mode === "dynamic") {
       // dynamic -> "target_entity"
       const targetentity = this._config.target_entity;
       const targetentitystate = targetentity ? this._hass?.states?.[targetentity]?.state : undefined;
@@ -179,7 +239,8 @@ class EmbeddedViewCard extends HTMLElement {
     const needRender =
       !this._activeViewElement ||
       effectiveView !== this._resolved.view ||
-      effectiveDashboard !== this._resolved.dashboard;
+      effectiveDashboard !== this._resolved.dashboard ||
+      (mode === "hash" && currentHash !== this._resolved.hash);
 
     if (needRender) {
       this._renderTarget(effectiveDashboard, effectiveView, external).catch((err) => {
@@ -272,6 +333,9 @@ class EmbeddedViewCard extends HTMLElement {
     // storage paths so that we render only on change 
     this._resolved.view = viewPath;
     this._resolved.dashboard = dashboardPath;
+    if (this._config.mode === "hash") {
+      this._resolved.hash = window.location.hash.replace(/^#/, "") || this._config.default || "";
+    }
   }
 
 
@@ -526,15 +590,25 @@ class EmbeddedViewCardEditor extends HTMLElement {
     modeSel.selector = { select: { options: [
       { value: "static",  label: this._t("Static") },
       { value: "dynamic", label: this._t("Dynamic (entity)") },
+      { value: "hash",    label: this._t("Hash (URL hash)") },
     ], custom_value: true } };  // forces dropdown even with few options
     modeSel.value = this._config.mode || "static";
 
     modeSel.addEventListener("value-changed", (ev) => {
-      const mode = String(ev.detail?.value || "").toLowerCase() === "dynamic" ? "dynamic" : "static";
+      const mode = String(ev.detail?.value || "").toLowerCase();
       if (this._config.mode === mode) return;
-      this._config.mode = mode;
 
-      if (mode === "dynamic") {
+      if (mode === "hash") {
+        // switching to hash: drop static and dynamic keys
+        delete this._config.dashboard;
+        delete this._config.view;
+        delete this._config.view_path;
+        delete this._config.view_path_entity;
+        delete this._config.target_entity;
+        if (!this._config.states) this._config.states = {};
+        if (!this._config.default) this._config.default = "";
+      }
+      else if (mode === "dynamic") {
         // switching to dynamic: drop static keys immediately
         delete this._config.dashboard;
         delete this._config.view;
@@ -544,8 +618,10 @@ class EmbeddedViewCardEditor extends HTMLElement {
         this._viewsForDash = [];
       }
       else {
-        // switching to static: drop dynamic keys and migrate legacy once
+        // switching to static: drop dynamic and hash keys
         delete this._config.target_entity;
+        delete this._config.states;
+        delete this._config.default;
         const legacy = this._config.view ?? this._config.view_path ?? "";
         if (legacy !== "") this._config.view = legacy;
         delete this._config.view_path;
@@ -655,6 +731,127 @@ class EmbeddedViewCardEditor extends HTMLElement {
         }</div>`,
       ].join("");
       wrap.appendChild(pv);
+    }
+
+    // hash mode UI
+    if ((this._config.mode || "static") === "hash") {
+      // default value input
+      const defaultInput = document.createElement("ha-selector");
+      defaultInput.label = this._t("Default hash value (fallback)");
+      defaultInput.hass = this._hass;
+      defaultInput.selector = { text: {} };
+      defaultInput.value = this._config.default || "";
+
+      defaultInput.addEventListener("value-changed", (ev) => {
+        this._config.default = ev.detail?.value || "";
+        this._updateConfig();
+      });
+      wrap.appendChild(defaultInput);
+
+      // states list
+      const statesContainer = document.createElement("div");
+      statesContainer.style.display = "flex";
+      statesContainer.style.flexDirection = "column";
+      statesContainer.style.gap = "8px";
+
+      const statesLabel = document.createElement("div");
+      statesLabel.style.fontWeight = "600";
+      statesLabel.textContent = this._t("States (hash → view mapping)");
+      statesContainer.appendChild(statesLabel);
+
+      const states = this._config.states || {};
+      const keys = Object.keys(states);
+
+      const renderStateRows = () => {
+        // clear existing rows (keep label)
+        while (statesContainer.children.length > 1) {
+          statesContainer.removeChild(statesContainer.lastChild);
+        }
+
+        const currentKeys = Object.keys(this._config.states || {});
+        for (const key of currentKeys) {
+          const row = document.createElement("div");
+          row.style.display = "flex";
+          row.style.gap = "8px";
+          row.style.alignItems = "flex-end";
+
+          // hash key input
+          const keyInput = document.createElement("ha-selector");
+          keyInput.selector = { text: {} };
+          keyInput.value = key;
+          keyInput.style.flex = "1";
+
+          // view input
+          const viewInput = document.createElement("ha-selector");
+          viewInput.label = this._t("View");
+          viewInput.hass = this._hass;
+          viewInput.selector = { text: {} };
+          viewInput.value = this._config.states[key].view || "";
+          viewInput.style.flex = "1";
+
+          // dashboard input
+          const dashInput = document.createElement("ha-selector");
+          dashInput.label = this._t("Dashboard (optional)");
+          dashInput.hass = this._hass;
+          dashInput.selector = { text: {} };
+          dashInput.value = this._config.states[key].dashboard || "";
+          dashInput.style.flex = "1";
+
+          // remove button
+          const removeBtn = document.createElement("ha-icon-button");
+          removeBtn.icon = "mdi:delete";
+          removeBtn.title = this._t("Remove");
+          removeBtn.style.color = "var(--error-color)";
+          removeBtn.addEventListener("click", () => {
+            delete this._config.states[key];
+            this._updateConfig();
+            this._rendered = false;
+            this._safeRender();
+          });
+
+          const btnWrap = document.createElement("div");
+          btnWrap.style.display = "flex";
+          btnWrap.style.alignItems = "center";
+          btnWrap.style.paddingBottom = "8px";
+          btnWrap.appendChild(removeBtn);
+
+          row.appendChild(keyInput);
+          row.appendChild(viewInput);
+          row.appendChild(dashInput);
+          row.appendChild(btnWrap);
+          statesContainer.appendChild(row);
+        }
+      };
+
+      renderStateRows();
+
+      // add button
+      const addBtn = document.createElement("ha-button");
+      addBtn.textContent = this._t("Add state");
+      addBtn.addEventListener("click", () => {
+        if (!this._config.states) this._config.states = {};
+        const newKey = "state" + (Object.keys(this._config.states).length + 1);
+        this._config.states[newKey] = { view: "" };
+        this._updateConfig();
+        this._rendered = false;
+        this._safeRender();
+      });
+
+      wrap.appendChild(statesContainer);
+      wrap.appendChild(addBtn);
+
+      // hint
+      const hashHint = document.createElement("div");
+      hashHint.style.opacity = "0.9";
+      hashHint.innerHTML = [
+        `<div><strong>${this._t("How it works")}:</strong></div>`,
+        `<ul style="margin:4px 0 0 16px;padding:0;">`,
+        `<li>${this._t("The card reads the URL hash (e.g., #climate)")}</li>`,
+        `<li>${this._t("Matches it against the states map above")}</li>`,
+        `<li>${this._t("Use navigate action in buttons to change the hash")}</li>`,
+        `</ul>`,
+      ].join("");
+      wrap.appendChild(hashHint);
     }
 
     // ha-card toggle
@@ -826,7 +1023,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
   }
 
 
-  // normalizes config: drop legacy keys, keep valid/static/dynamic settings, preserve extras
+  // normalizes config: drop legacy keys, keep valid/static/dynamic/hash settings, preserve extras
   _normalizeConfig(config) {
     const out = {};
 
@@ -836,7 +1033,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
 
     let mode = String(config.mode ?? "static").toLowerCase();
     if (effectiveTarget && mode !== "dynamic") mode = "dynamic";
-    mode = mode === "dynamic" ? "dynamic" : "static";
+    mode = mode === "dynamic" ? "dynamic" : mode === "hash" ? "hash" : "static";
 
     // header
     out.type = "custom:embedded-view-card";
@@ -845,7 +1042,12 @@ class EmbeddedViewCardEditor extends HTMLElement {
     if (mode === "dynamic") {
       // dynamic: keep only dynamic essentials
       if (effectiveTarget) out.target_entity = effectiveTarget;
-      // drop dynamic leftovers implicitly (not copied)
+      // drop dynamic/leftover keys implicitly (not copied)
+    }
+    else if (mode === "hash") {
+      // hash: keep states and default
+      if (config.default) out.default = config.default;
+      if (config.states && Object.keys(config.states).length > 0) out.states = config.states;
     }
     else {
       // static: prefer view and dashboard, (legacy fallback: view_path, view_path_entity)
