@@ -29,6 +29,9 @@ class EmbeddedViewCard extends HTMLElement {
 
     // hash mode handler
     this._onHashChange = this._onHashChange.bind(this);
+
+    // hash mode view cache
+    this._hashViews = {};
   }
 
 
@@ -754,80 +757,177 @@ class EmbeddedViewCardEditor extends HTMLElement {
       const statesContainer = document.createElement("div");
       statesContainer.style.display = "flex";
       statesContainer.style.flexDirection = "column";
-      statesContainer.style.gap = "8px";
+      statesContainer.style.gap = "12px";
 
       const statesLabel = document.createElement("div");
       statesLabel.style.fontWeight = "600";
       statesLabel.textContent = this._t("States (hash → view mapping)");
       statesContainer.appendChild(statesLabel);
 
-      const states = this._config.states || {};
-      const keys = Object.keys(states);
+      const buildStateRow = (key) => {
+        const state = this._config.states[key];
+        const card = document.createElement("div");
+        card.style.cssText = "border:1px solid var(--divider-color);border-radius:8px;padding:12px;position:relative;";
 
-      const renderStateRows = () => {
-        // clear existing rows (keep label)
-        while (statesContainer.children.length > 1) {
-          statesContainer.removeChild(statesContainer.lastChild);
-        }
+        // header row: hash key + remove button
+        const header = document.createElement("div");
+        header.style.cssText = "display:flex;gap:8px;align-items:center;margin-bottom:8px;";
 
-        const currentKeys = Object.keys(this._config.states || {});
-        for (const key of currentKeys) {
-          const row = document.createElement("div");
-          row.style.display = "flex";
-          row.style.gap = "8px";
-          row.style.alignItems = "flex-end";
+        const keyLabel = document.createElement("span");
+        keyLabel.style.cssText = "font-weight:600;min-width:60px;";
+        keyLabel.textContent = this._t("Hash key");
+        header.appendChild(keyLabel);
 
-          // hash key input
-          const keyInput = document.createElement("ha-selector");
-          keyInput.selector = { text: {} };
-          keyInput.value = key;
-          keyInput.style.flex = "1";
-
-          // view input
-          const viewInput = document.createElement("ha-selector");
-          viewInput.label = this._t("View");
-          viewInput.hass = this._hass;
-          viewInput.selector = { text: {} };
-          viewInput.value = this._config.states[key].view || "";
-          viewInput.style.flex = "1";
-
-          // dashboard input
-          const dashInput = document.createElement("ha-selector");
-          dashInput.label = this._t("Dashboard (optional)");
-          dashInput.hass = this._hass;
-          dashInput.selector = { text: {} };
-          dashInput.value = this._config.states[key].dashboard || "";
-          dashInput.style.flex = "1";
-
-          // remove button
-          const removeBtn = document.createElement("button");
-          removeBtn.textContent = "✕";
-          removeBtn.title = this._t("Remove");
-          removeBtn.style.cssText = "background:none;border:none;color:var(--error-color);cursor:pointer;font-size:18px;padding:4px 8px;border-radius:4px;line-height:1;";
-          removeBtn.addEventListener("mouseover", () => removeBtn.style.background = "rgba(220,53,69,0.1)");
-          removeBtn.addEventListener("mouseout", () => removeBtn.style.background = "none");
-          removeBtn.addEventListener("click", () => {
+        const keyInput = document.createElement("ha-selector");
+        keyInput.selector = { text: {} };
+        keyInput.value = key;
+        keyInput.style.flex = "1";
+        keyInput.addEventListener("value-changed", (ev) => {
+          const newKey = ev.detail?.value || key;
+          if (newKey !== key && newKey) {
+            const newState = { ...this._config.states[key] };
             delete this._config.states[key];
+            this._config.states[newKey] = newState;
             this._updateConfig();
             this._rendered = false;
             this._safeRender();
-          });
+          }
+        });
+        header.appendChild(keyInput);
 
-          const btnWrap = document.createElement("div");
-          btnWrap.style.display = "flex";
-          btnWrap.style.alignItems = "center";
-          btnWrap.style.paddingBottom = "8px";
-          btnWrap.appendChild(removeBtn);
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "✕";
+        removeBtn.title = this._t("Remove");
+        removeBtn.style.cssText = "background:none;border:none;color:var(--error-color);cursor:pointer;font-size:18px;padding:4px 8px;border-radius:4px;line-height:1;";
+        removeBtn.addEventListener("mouseover", () => removeBtn.style.background = "rgba(220,53,69,0.1)");
+        removeBtn.addEventListener("mouseout", () => removeBtn.style.background = "none");
+        removeBtn.addEventListener("click", () => {
+          delete this._config.states[key];
+          this._updateConfig();
+          this._rendered = false;
+          this._safeRender();
+        });
+        header.appendChild(removeBtn);
+        card.appendChild(header);
 
-          row.appendChild(keyInput);
-          row.appendChild(viewInput);
-          row.appendChild(dashInput);
-          row.appendChild(btnWrap);
-          statesContainer.appendChild(row);
+        // dashboard dropdown
+        const dashRow = document.createElement("div");
+        dashRow.style.cssText = "display:flex;gap:8px;align-items:center;margin-bottom:8px;";
+
+        const dashLabel = document.createElement("span");
+        dashLabel.style.cssText = "font-weight:600;min-width:60px;";
+        dashLabel.textContent = this._t("Dashboard");
+        dashRow.appendChild(dashLabel);
+
+        const dashOptions = [{ value: "", label: this._t("(current dashboard)") }, ...this._dashboards];
+        const dashSel = document.createElement("ha-selector");
+        dashSel.selector = { select: { options: dashOptions, custom_value: true } };
+        dashSel.value = state.dashboard || "";
+        dashSel.style.flex = "1";
+        dashRow.appendChild(dashSel);
+        card.appendChild(dashRow);
+
+        // view dropdown
+        const viewRow = document.createElement("div");
+        viewRow.style.cssText = "display:flex;gap:8px;align-items:center;";
+
+        const viewLabel = document.createElement("span");
+        viewLabel.style.cssText = "font-weight:600;min-width:60px;";
+        viewLabel.textContent = this._t("View");
+        viewRow.appendChild(viewLabel);
+
+        const selectedDash = state.dashboard || "";
+        let viewOptions = [];
+        if (selectedDash && this._hashViews[selectedDash]) {
+          viewOptions = this._hashViews[selectedDash].map(v => ({
+            value: v.path,
+            label: v.path ? (v.title ? `${v.title} (${v.path})` : v.path) : v.title
+          }));
+        } else if (!selectedDash && this._hashViews["__current__"]) {
+          viewOptions = this._hashViews["__current__"].map(v => ({
+            value: v.path,
+            label: v.path ? (v.title ? `${v.title} (${v.path})` : v.path) : v.title
+          }));
+        } else {
+          viewOptions = [{ value: "", label: this._t("Loading views…") }];
         }
+
+        const viewSel = document.createElement("ha-selector");
+        viewSel.selector = { select: { options: viewOptions, custom_value: true } };
+        viewSel.value = state.view || "";
+        viewSel.style.flex = "1";
+        viewRow.appendChild(viewSel);
+        card.appendChild(viewRow);
+
+        // load views when dashboard changes
+        const loadViews = async (dashboard) => {
+          const cacheKey = dashboard || "__current__";
+          if (!this._hashViews[cacheKey]) {
+            this._hashViews[cacheKey] = [{ path: "", title: this._t("Loading views…") }];
+            this._rendered = false;
+            this._safeRender();
+
+            const views = dashboard ? await this._loadViewsFor(dashboard) : await this._loadViewsFor(this._getHuiRoot()?.lovelace?.urlPath || "lovelace");
+            this._hashViews[cacheKey] = views.length ? views : [{ path: "", title: this._t("No views found") }];
+            this._rendered = false;
+            this._safeRender();
+          }
+        };
+
+        dashSel.addEventListener("value-changed", (ev) => {
+          const newDash = ev.detail?.value || "";
+          state.dashboard = newDash;
+          this._updateConfig();
+
+          const ck = newDash || "__current__";
+          if (!this._hashViews[ck]) {
+            loadViews(newDash);
+          }
+          this._rendered = false;
+          this._safeRender();
+        });
+
+        viewSel.addEventListener("value-changed", (ev) => {
+          state.view = ev.detail?.value || "";
+          this._updateConfig();
+        });
+
+        return card;
       };
 
-      renderStateRows();
+      // preload current dashboard views
+      const preloadCurrent = async () => {
+        const currentDash = this._getHuiRoot()?.lovelace?.urlPath || "lovelace";
+        if (!this._hashViews["__current__"]) {
+          this._hashViews["__current__"] = [{ path: "", title: this._t("Loading views…") }];
+          const views = await this._loadViewsFor(currentDash);
+          this._hashViews["__current__"] = views.length ? views : [{ path: "", title: this._t("No views found") }];
+          this._rendered = false;
+          this._safeRender();
+        }
+      };
+      preloadCurrent();
+
+      // preload views for dashboards referenced in states
+      const states = this._config.states || {};
+      for (const key of Object.keys(states)) {
+        const dash = states[key].dashboard;
+        const cacheKey = dash || "__current__";
+        if (!this._hashViews[cacheKey]) {
+          (async () => {
+            this._hashViews[cacheKey] = [{ path: "", title: this._t("Loading views…") }];
+            const views = dash ? await this._loadViewsFor(dash) : await this._loadViewsFor(this._getHuiRoot()?.lovelace?.urlPath || "lovelace");
+            this._hashViews[cacheKey] = views.length ? views : [{ path: "", title: this._t("No views found") }];
+            this._rendered = false;
+            this._safeRender();
+          })();
+        }
+      }
+
+      // render all state rows
+      for (const key of Object.keys(states)) {
+        statesContainer.appendChild(buildStateRow(key));
+      }
 
       // add button
       const addBtn = document.createElement("button");
