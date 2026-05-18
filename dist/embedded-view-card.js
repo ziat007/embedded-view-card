@@ -598,6 +598,8 @@ class EmbeddedViewCardEditor extends HTMLElement {
       const mode = String(ev.detail?.value || "").toLowerCase();
       if (this._config.mode === mode) return;
 
+      this._config.mode = mode;
+
       if (mode === "hash") {
         // switching to hash: drop static and dynamic keys
         delete this._config.dashboard;
@@ -798,10 +800,12 @@ class EmbeddedViewCardEditor extends HTMLElement {
           dashInput.style.flex = "1";
 
           // remove button
-          const removeBtn = document.createElement("ha-icon-button");
-          removeBtn.icon = "mdi:delete";
+          const removeBtn = document.createElement("button");
+          removeBtn.textContent = "✕";
           removeBtn.title = this._t("Remove");
-          removeBtn.style.color = "var(--error-color)";
+          removeBtn.style.cssText = "background:none;border:none;color:var(--error-color);cursor:pointer;font-size:18px;padding:4px 8px;border-radius:4px;line-height:1;";
+          removeBtn.addEventListener("mouseover", () => removeBtn.style.background = "rgba(220,53,69,0.1)");
+          removeBtn.addEventListener("mouseout", () => removeBtn.style.background = "none");
           removeBtn.addEventListener("click", () => {
             delete this._config.states[key];
             this._updateConfig();
@@ -826,8 +830,11 @@ class EmbeddedViewCardEditor extends HTMLElement {
       renderStateRows();
 
       // add button
-      const addBtn = document.createElement("ha-button");
-      addBtn.textContent = this._t("Add state");
+      const addBtn = document.createElement("button");
+      addBtn.textContent = "+ " + this._t("Add state");
+      addBtn.style.cssText = "background:var(--primary-color);color:var(--text-primary-color);border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-weight:600;font-size:14px;margin-top:4px;";
+      addBtn.addEventListener("mouseover", () => addBtn.style.opacity = "0.9");
+      addBtn.addEventListener("mouseout", () => addBtn.style.opacity = "1");
       addBtn.addEventListener("click", () => {
         if (!this._config.states) this._config.states = {};
         const newKey = "state" + (Object.keys(this._config.states).length + 1);
