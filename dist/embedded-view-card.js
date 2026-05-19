@@ -509,6 +509,11 @@ class EmbeddedViewCardEditor extends HTMLElement {
     // set currently selected dashboard for the editor dropdown
     if (typeof this._config.dashboard === "string") this._selectedDash = this._config.dashboard;
 
+    // ensure states is always an object when in hash mode
+    if (this._config.mode === "hash" && !this._config.states) {
+      this._config.states = {};
+    }
+
     // notify HA editor that the config has changed
     if (changed) {
       this._updateConfig();
@@ -586,25 +591,39 @@ class EmbeddedViewCardEditor extends HTMLElement {
     wrap.style.gap = "12px";
     wrap.style.padding = "0 16px";
 
-    // mode selector (dropdown)
-    const modeSel = document.createElement("ha-selector");
-    modeSel.label = this._t("Mode");
-    modeSel.hass = this._hass;
-    modeSel.selector = { select: { options: [
+    // mode selector (plain select for reliability)
+    const modeRow = document.createElement("div");
+    modeRow.style.display = "flex";
+    modeRow.style.alignItems = "center";
+    modeRow.style.gap = "8px";
+
+    const modeLabel = document.createElement("label");
+    modeLabel.textContent = this._t("Mode");
+    modeLabel.style.fontWeight = "600";
+    modeRow.appendChild(modeLabel);
+
+    const modeSel = document.createElement("select");
+    modeSel.style.cssText = "flex:1;padding:8px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color);font-size:14px;";
+    const modeOptions = [
       { value: "static",  label: this._t("Static") },
       { value: "dynamic", label: this._t("Dynamic (entity)") },
       { value: "hash",    label: this._t("Hash (URL hash)") },
-    ] } };
-    modeSel.value = this._config.mode || "static";
+    ];
+    for (const opt of modeOptions) {
+      const option = document.createElement("option");
+      option.value = opt.value;
+      option.textContent = opt.label;
+      if (opt.value === (this._config.mode || "static")) option.selected = true;
+      modeSel.appendChild(option);
+    }
 
-    modeSel.addEventListener("value-changed", (ev) => {
-      const mode = String(ev.detail?.value || "").toLowerCase();
+    modeSel.addEventListener("change", () => {
+      const mode = modeSel.value;
       if (this._config.mode === mode) return;
 
       this._config.mode = mode;
 
       if (mode === "hash") {
-        // switching to hash: drop static and dynamic keys
         delete this._config.dashboard;
         delete this._config.view;
         delete this._config.view_path;
@@ -614,16 +633,16 @@ class EmbeddedViewCardEditor extends HTMLElement {
         if (!this._config.default) this._config.default = "";
       }
       else if (mode === "dynamic") {
-        // switching to dynamic: drop static keys immediately
         delete this._config.dashboard;
         delete this._config.view;
         delete this._config.view_path;
         delete this._config.view_path_entity;
+        delete this._config.states;
+        delete this._config.default;
         this._selectedDash = "";
         this._viewsForDash = [];
       }
       else {
-        // switching to static: drop dynamic and hash keys
         delete this._config.target_entity;
         delete this._config.states;
         delete this._config.default;
@@ -637,7 +656,8 @@ class EmbeddedViewCardEditor extends HTMLElement {
       this._rendered = false;
       this._safeRender();
     });
-    wrap.appendChild(modeSel);
+    modeRow.appendChild(modeSel);
+    wrap.appendChild(modeRow);
 
     // static mode UI
     if ((this._config.mode || "static") === "static") {
@@ -740,6 +760,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
 
     // hash mode UI
     if ((this._config.mode || "static") === "hash") {
+      try {
       // default value input
       const defaultInput = document.createElement("ha-selector");
       defaultInput.label = this._t("Default hash value (fallback)");
@@ -959,6 +980,13 @@ class EmbeddedViewCardEditor extends HTMLElement {
         `</ul>`,
       ].join("");
       wrap.appendChild(hashHint);
+      } catch (err) {
+        console.error("[embedded-view-card] hash mode render error:", err);
+        const errDiv = document.createElement("div");
+        errDiv.style.cssText = "padding:12px;border:1px solid var(--error-color);border-radius:8px;color:var(--error-color);font-family:monospace;font-size:12px;";
+        errDiv.textContent = "Hash mode error: " + err.message;
+        wrap.appendChild(errDiv);
+      }
     }
 
     // ha-card toggle
