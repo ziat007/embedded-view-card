@@ -594,7 +594,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
       { value: "static",  label: this._t("Static") },
       { value: "dynamic", label: this._t("Dynamic (entity)") },
       { value: "hash",    label: this._t("Hash (URL hash)") },
-    ], custom_value: true } };  // forces dropdown even with few options
+    ] } };
     modeSel.value = this._config.mode || "static";
 
     modeSel.addEventListener("value-changed", (ev) => {
