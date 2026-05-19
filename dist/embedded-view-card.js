@@ -895,32 +895,34 @@ class EmbeddedViewCardEditor extends HTMLElement {
         return card;
       };
 
-      // preload current dashboard views
-      const preloadCurrent = async () => {
-        const currentDash = this._getHuiRoot()?.lovelace?.urlPath || "lovelace";
-        if (!this._hashViews["__current__"]) {
-          this._hashViews["__current__"] = [{ path: "", title: this._t("Loading views…") }];
-          const views = await this._loadViewsFor(currentDash);
+      // preload current dashboard views (async, non-blocking)
+      const currentDash = this._getHuiRoot()?.lovelace?.urlPath || "lovelace";
+      if (!this._hashViews["__current__"]) {
+        this._hashViews["__current__"] = [{ path: "", title: this._t("Loading views…") }];
+        this._loadViewsFor(currentDash).then(views => {
           this._hashViews["__current__"] = views.length ? views : [{ path: "", title: this._t("No views found") }];
-          this._rendered = false;
-          this._safeRender();
-        }
-      };
-      preloadCurrent();
+          if (this._config.mode === "hash") {
+            this._rendered = false;
+            this._safeRender();
+          }
+        }).catch(() => {});
+      }
 
-      // preload views for dashboards referenced in states
+      // preload views for dashboards referenced in existing states (async, non-blocking)
       const states = this._config.states || {};
       for (const key of Object.keys(states)) {
         const dash = states[key].dashboard;
         const cacheKey = dash || "__current__";
         if (!this._hashViews[cacheKey]) {
-          (async () => {
-            this._hashViews[cacheKey] = [{ path: "", title: this._t("Loading views…") }];
-            const views = dash ? await this._loadViewsFor(dash) : await this._loadViewsFor(this._getHuiRoot()?.lovelace?.urlPath || "lovelace");
+          this._hashViews[cacheKey] = [{ path: "", title: this._t("Loading views…") }];
+          const loadDash = dash || currentDash;
+          this._loadViewsFor(loadDash).then(views => {
             this._hashViews[cacheKey] = views.length ? views : [{ path: "", title: this._t("No views found") }];
-            this._rendered = false;
-            this._safeRender();
-          })();
+            if (this._config.mode === "hash") {
+              this._rendered = false;
+              this._safeRender();
+            }
+          }).catch(() => {});
         }
       }
 
@@ -933,8 +935,6 @@ class EmbeddedViewCardEditor extends HTMLElement {
       const addBtn = document.createElement("button");
       addBtn.textContent = "+ " + this._t("Add state");
       addBtn.style.cssText = "background:var(--primary-color);color:var(--text-primary-color);border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-weight:600;font-size:14px;margin-top:4px;";
-      addBtn.addEventListener("mouseover", () => addBtn.style.opacity = "0.9");
-      addBtn.addEventListener("mouseout", () => addBtn.style.opacity = "1");
       addBtn.addEventListener("click", () => {
         if (!this._config.states) this._config.states = {};
         const newKey = "state" + (Object.keys(this._config.states).length + 1);
