@@ -37,10 +37,12 @@ class EmbeddedViewCard extends HTMLElement {
 
   connectedCallback() {
     window.addEventListener("hashchange", this._onHashChange);
+    window.addEventListener("popstate", this._onHashChange);
   }
 
   disconnectedCallback() {
     window.removeEventListener("hashchange", this._onHashChange);
+    window.removeEventListener("popstate", this._onHashChange);
   }
 
   _onHashChange() {
@@ -149,13 +151,16 @@ class EmbeddedViewCard extends HTMLElement {
     }
 
     if (mode === "hash") {
-      // hash mode -> read URL hash, match against states map
-      currentHash = window.location.hash.replace(/^#/, "") || this._config.default || "";
+      // hash mode -> read URL hash or extra path segment, match against states map
+      const hashValue = window.location.hash.replace(/^#/, "");
+      // extract extra path segment after dashboard/view (e.g. /dashboard/view/climate -> "climate")
+      const pathValue = (i >= 0 && segments[i + 2]) ? decodeURIComponent(segments[i + 2]) : "";
+      currentHash = hashValue || pathValue || this._config.default || "";
 
       if (!currentHash) {
         if (this._resolved.view !== "__error_hash__") {
           this._resolved.view = "__error_hash__";
-          this._showError(this._t("Missing configuration") + ": no URL hash and no default value");
+          this._showError(this._t("Missing configuration") + ": no URL hash, path segment, or default value");
         }
         return;
       }
@@ -976,9 +981,9 @@ class EmbeddedViewCardEditor extends HTMLElement {
       hashHint.innerHTML = [
         `<div><strong>${this._t("How it works")}:</strong></div>`,
         `<ul style="margin:4px 0 0 16px;padding:0;">`,
-        `<li>${this._t("The card reads the URL hash (e.g., #climate)")}</li>`,
+        `<li>${this._t("The card reads the URL hash (e.g., #climate) or extra path segment (e.g., /dashboard/view/climate)")}</li>`,
         `<li>${this._t("Matches it against the states map above")}</li>`,
-        `<li>${this._t("Use navigate action in buttons to change the hash")}</li>`,
+        `<li>${this._t("Use navigate action in buttons to change the hash or path")}</li>`,
         `</ul>`,
       ].join("");
       wrap.appendChild(hashHint);
