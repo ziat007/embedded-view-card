@@ -493,6 +493,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
     this._selectedDash = "";    // dashboard (for UI selection)
     this._dashboards = [];      // [{ value: url_path, label: string }]
     this._viewsForDash = [];    // [{ path, title }]
+    this._hashViews = {};       // cached views per dashboard for hash mode
   }
 
   // lifecycle hook
