@@ -762,6 +762,9 @@ class EmbeddedViewCardEditor extends HTMLElement {
     // hash mode UI
     if ((this._config.mode || "static") === "hash") {
       try {
+      // Defensive guard: ensure _hashViews exists
+      if (!this._hashViews) this._hashViews = {};
+
       // default value input
       const defaultInput = document.createElement("ha-selector");
       defaultInput.label = this._t("Default hash value (fallback)");
