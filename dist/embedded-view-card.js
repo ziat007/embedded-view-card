@@ -494,6 +494,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
     this._dashboards = [];      // [{ value: url_path, label: string }]
     this._viewsForDash = [];    // [{ path, title }]
     this._hashViews = {};       // cached views per dashboard for hash mode
+    this._needsRender = true;   // only rebuild DOM when structure changes
   }
 
   // lifecycle hook
@@ -520,8 +521,10 @@ class EmbeddedViewCardEditor extends HTMLElement {
       this._updateConfig();
     }
 
-    this._rendered = false;
-    this._safeRender();
+    if (this._needsRender) {
+      this._needsRender = false;
+      this._safeRender();
+    }
   }
 
 
@@ -529,7 +532,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     this._collectDashboards().then(() => {
-      if (!this._rendered) this._safeRender();
+      if (this._needsRender) this._safeRender();
     });
   }
 
@@ -653,9 +656,8 @@ class EmbeddedViewCardEditor extends HTMLElement {
         delete this._config.view_path_entity;
       }
 
+      this._needsRender = true;
       this._updateConfig();
-      this._rendered = false;
-      this._safeRender();
     });
     modeRow.appendChild(modeSel);
     wrap.appendChild(modeRow);
@@ -813,9 +815,8 @@ class EmbeddedViewCardEditor extends HTMLElement {
             const newState = { ...this._config.states[key] };
             delete this._config.states[key];
             this._config.states[newKey] = newState;
+            this._needsRender = true;
             this._updateConfig();
-            this._rendered = false;
-            this._safeRender();
           }
         });
         header.appendChild(keyInput);
@@ -828,9 +829,8 @@ class EmbeddedViewCardEditor extends HTMLElement {
         removeBtn.addEventListener("mouseout", () => removeBtn.style.background = "none");
         removeBtn.addEventListener("click", () => {
           delete this._config.states[key];
+          this._needsRender = true;
           this._updateConfig();
-          this._rendered = false;
-          this._safeRender();
         });
         header.appendChild(removeBtn);
         card.appendChild(header);
@@ -889,12 +889,12 @@ class EmbeddedViewCardEditor extends HTMLElement {
           const cacheKey = dashboard || "__current__";
           if (!this._hashViews[cacheKey]) {
             this._hashViews[cacheKey] = [{ path: "", title: this._t("Loading views…") }];
-            this._rendered = false;
+            this._needsRender = true;
             this._safeRender();
 
             const views = dashboard ? await this._loadViewsFor(dashboard) : await this._loadViewsFor(this._getHuiRoot()?.lovelace?.urlPath || "lovelace");
             this._hashViews[cacheKey] = views.length ? views : [{ path: "", title: this._t("No views found") }];
-            this._rendered = false;
+            this._needsRender = true;
             this._safeRender();
           }
         };
@@ -908,8 +908,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
           if (!this._hashViews[ck]) {
             loadViews(newDash);
           }
-          this._rendered = false;
-          this._safeRender();
+          this._needsRender = true;
         });
 
         viewSel.addEventListener("value-changed", (ev) => {
@@ -927,7 +926,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
         this._loadViewsFor(currentDash).then(views => {
           this._hashViews["__current__"] = views.length ? views : [{ path: "", title: this._t("No views found") }];
           if (this._config.mode === "hash") {
-            this._rendered = false;
+            this._needsRender = true;
             this._safeRender();
           }
         }).catch(() => {});
@@ -944,7 +943,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
           this._loadViewsFor(loadDash).then(views => {
             this._hashViews[cacheKey] = views.length ? views : [{ path: "", title: this._t("No views found") }];
             if (this._config.mode === "hash") {
-              this._rendered = false;
+              this._needsRender = true;
               this._safeRender();
             }
           }).catch(() => {});
@@ -964,9 +963,8 @@ class EmbeddedViewCardEditor extends HTMLElement {
         if (!this._config.states) this._config.states = {};
         const newKey = "state" + (Object.keys(this._config.states).length + 1);
         this._config.states[newKey] = { view: "" };
+        this._needsRender = true;
         this._updateConfig();
-        this._rendered = false;
-        this._safeRender();
       });
 
       wrap.appendChild(statesContainer);
