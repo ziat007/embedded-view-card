@@ -153,8 +153,9 @@ class EmbeddedViewCard extends HTMLElement {
     if (mode === "hash") {
       // hash mode -> read URL hash or extra path segment, match against states map
       const hashValue = window.location.hash.replace(/^#/, "");
-      // extract extra path segment after dashboard/view (e.g. /dashboard/view/climate -> "climate")
-      const pathValue = (i >= 0 && segments[i + 2]) ? decodeURIComponent(segments[i + 2]) : "";
+      // extract extra path segment as the last segment beyond dashboard/view
+      // e.g. /dashboard-test/home/climate -> segments=["dashboard-test","home","climate"] -> "climate"
+      const pathValue = segments.length > 2 ? decodeURIComponent(segments[segments.length - 1]) : "";
       currentHash = hashValue || pathValue || this._config.default || "";
 
       if (!currentHash) {
