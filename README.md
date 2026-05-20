@@ -181,6 +181,25 @@ cards:
 
 ---
 
+## ⚙️ Hash Mode `states` Structure
+
+The `states` object maps URL hash keys (or path segments) to view configurations:
+
+```yaml
+states:
+  climate:
+    view: climate
+  lights:
+    view: lights
+  energy:
+    dashboard: dashboard-main
+    view: energy
+```
+
+Each key (e.g., `climate`, `lights`) corresponds to a URL hash (`#climate`, `#lights`) or an extra path segment (`/dashboard/view/climate`). The value specifies which view to load, optionally from a different dashboard.
+
+---
+
 ## 🖥️ Editor Support
 
 - Dropdown selection of dashboards and views

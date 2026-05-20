@@ -4,6 +4,50 @@
 import { VERSION } from "./version.js";
 import { t as i18n } from "./i18n/index.js";
 
+
+// ── Shared utilities (used by both card and editor) ──────────────────────────
+
+function _getHuiRoot() {
+  return document
+    .querySelector("home-assistant")?.shadowRoot
+    ?.querySelector("home-assistant-main")?.shadowRoot
+    ?.querySelector("ha-panel-lovelace")?.shadowRoot
+    ?.querySelector("hui-root");
+}
+
+function _isViewVisibleToUser(view, hass) {
+  const uid = hass?.user?.id || null;
+  if (!uid || !view) return true;
+
+  const raw =
+    (Array.isArray(view.visible) && view.visible.length ? view.visible : null) ||
+    (Array.isArray(view.visibility) && view.visibility.length ? view.visibility : null) ||
+    (Array.isArray(view.users) && view.users.length ? view.users : null);
+
+  if (!raw) return true;
+
+  for (const r of raw) {
+    if (typeof r === "string" && r === uid) return true;
+    if (r && typeof r === "object") {
+      if (typeof r.user === "string" && r.user === uid) return true;
+      if (Array.isArray(r.user) && r.user.includes(uid)) return true;
+      if (Array.isArray(r.users) && r.users.includes(uid)) return true;
+    }
+  }
+
+  return false;
+}
+
+function _escapeHtml(str) {
+  if (typeof str !== "string") return String(str ?? "");
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 class EmbeddedViewCard extends HTMLElement {
 
   // initializes the card instance, sets up shadow DOM and internal containers
@@ -20,6 +64,7 @@ class EmbeddedViewCard extends HTMLElement {
     this._resolved = { view: undefined, dashboard: undefined, hash: undefined };
     this._waitingForRoot = false;
     this._wsConfigCache = {};
+    this._waitForTimers = new Set();
 
     // initialize DOM elements
     this._container = document.createElement("div");
@@ -43,6 +88,8 @@ class EmbeddedViewCard extends HTMLElement {
   disconnectedCallback() {
     window.removeEventListener("hashchange", this._onHashChange);
     window.removeEventListener("popstate", this._onHashChange);
+    for (const id of this._waitForTimers) clearTimeout(id);
+    this._waitForTimers.clear();
   }
 
   _onHashChange() {
@@ -206,7 +253,7 @@ class EmbeddedViewCard extends HTMLElement {
       const parsed = this._parseTargetString(targetentitystate, currentDashboard);
 
       if (!parsed || !parsed.dashboard || !parsed.view) {
-        this._showError(this._t("Invalid dynamic target") + ": " + targetentitystate);
+        this._showError(this._t("Invalid dynamic target") + ": " + _escapeHtml(targetentitystate));
         return;
       }
 
@@ -240,7 +287,7 @@ class EmbeddedViewCard extends HTMLElement {
 
     // loop guard -> prevent self-embedding
     if (effectiveDashboard == currentDashboard && effectiveView == currentView) {
-      this._showError(this._t("Self embedding not alowed") + ":<br>host view = " + currentDashboard + "/" + currentView + "<br>embedding view = " + effectiveDashboard + "/" + effectiveView);
+      this._showError(this._t("Self embedding not allowed") + ":<br>host view = " + _escapeHtml(currentDashboard) + "/" + _escapeHtml(currentView) + "<br>embedding view = " + _escapeHtml(effectiveDashboard) + "/" + _escapeHtml(effectiveView));
       return;
     }
 
@@ -305,7 +352,7 @@ class EmbeddedViewCard extends HTMLElement {
         }
       }
       if (!fresh) {
-        this._showError(this._t("View not found") + ": " + viewPath);
+        this._showError(this._t("View not found") + ": " + _escapeHtml(viewPath));
         return;
       }
       lovelace = { config: freshConfig, urlPath: dashboardPath, editMode: false };
@@ -315,7 +362,7 @@ class EmbeddedViewCard extends HTMLElement {
 
     // no view found
     if (!view) {
-      this._showError(this._t("View not found") + ": " + viewPath);
+      this._showError(this._t("View not found") + ": " + _escapeHtml(viewPath));
       return;
     }
 
@@ -350,34 +397,7 @@ class EmbeddedViewCard extends HTMLElement {
 
   // checks if the given view is visible for the current user according to its config
   _isViewVisibleToUser(view) {
-    // home assistant exposes the current user id on hass.user.id
-    const uid = this._hass?.user?.id || null;
-    if (!uid || !view) return true; // if we can't tell, fail open
-
-    //  normalize possible visibility definitions:
-    //  - 'visible': [ { user: "<id>" }, ... ]  (common)
-    //  - 'visible': [ "<id>", ... ]            (tolerate strings)
-    //  - 'visibility' or 'users' fallbacks (be liberal in what we accept)
-    const raw =
-      (Array.isArray(view.visible) && view.visible.length ? view.visible : null) ||
-      (Array.isArray(view.visibility) && view.visibility.length ? view.visibility : null) ||
-      (Array.isArray(view.users) && view.users.length ? view.users : null);
-
-    // no rules -> visible for everyone
-    if (!raw) return true;
-
-    // allow if any rule explicitly includes the current user id
-    for (const r of raw) {
-      if (typeof r === "string" && r === uid) return true;
-      if (r && typeof r === "object") {
-        if (typeof r.user === "string" && r.user === uid) return true;
-        if (Array.isArray(r.user) && r.user.includes(uid)) return true;
-        if (Array.isArray(r.users) && r.users.includes(uid)) return true;
-      }
-    }
-
-    // rules exist but none matched -> not visible for this user
-    return false;
+    return _isViewVisibleToUser(view, this._hass);
   }
 
   // fetch dashboard config  (only refresh when `force: true`)
@@ -440,11 +460,7 @@ class EmbeddedViewCard extends HTMLElement {
 
   // traverses nested shadowRoots to locate the main <hui-root> element of lovelace
   _getHuiRoot() {
-    return document
-      .querySelector("home-assistant")?.shadowRoot
-      ?.querySelector("home-assistant-main")?.shadowRoot
-      ?.querySelector("ha-panel-lovelace")?.shadowRoot
-      ?.querySelector("hui-root");
+    return _getHuiRoot();
   }
 
 
@@ -452,16 +468,23 @@ class EmbeddedViewCard extends HTMLElement {
   async _waitFor(fn, timeout = 8000, message = "Timeout") {
     const start = performance.now();
     return new Promise((resolve, reject) => {
+      let timerId;
       const tick = () => {
         try {
           const v = fn();
-          if (v) return resolve(v);
+          if (v) {
+            this._waitForTimers.delete(timerId);
+            return resolve(v);
+          }
         } catch (_) {}
 
-        if (performance.now() - start > timeout)
+        if (performance.now() - start > timeout) {
+          this._waitForTimers.delete(timerId);
           return reject(new Error(message));
+        }
 
-        setTimeout(tick, 100);
+        timerId = setTimeout(tick, 100);
+        this._waitForTimers.add(timerId);
       };
       tick();
     });
@@ -1129,34 +1152,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
 
   // checks if the given view is visible for the current user according to its config
   _isViewVisibleToUser(view) {
-    // home assistant exposes the current user id on hass.user.id
-    const uid = this._hass?.user?.id || null;
-    if (!uid || !view) return true; // if we can't tell, fail open
-
-    //  normalize possible visibility definitions:
-    //  - 'visible': [ { user: "<id>" }, ... ]  (common)
-    //  - 'visible': [ "<id>", ... ]            (tolerate strings)
-    //  - 'visibility' or 'users' fallbacks (be liberal in what we accept)
-    const raw =
-      (Array.isArray(view.visible) && view.visible.length ? view.visible : null) ||
-      (Array.isArray(view.visibility) && view.visibility.length ? view.visibility : null) ||
-      (Array.isArray(view.users) && view.users.length ? view.users : null);
-
-    // no rules -> visible for everyone
-    if (!raw) return true;
-
-    // allow if any rule explicitly includes the current user id
-    for (const r of raw) {
-      if (typeof r === "string" && r === uid) return true;
-      if (r && typeof r === "object") {
-        if (typeof r.user === "string" && r.user === uid) return true;
-        if (Array.isArray(r.user) && r.user.includes(uid)) return true;
-        if (Array.isArray(r.users) && r.users.includes(uid)) return true;
-      }
-    }
-
-    // rules exist but none matched -> not visible for this user
-    return false;
+    return _isViewVisibleToUser(view, this._hass);
   }
 
 
@@ -1238,11 +1234,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
 
   // traverses nested shadowRoots to locate the main <hui-root> element of lovelace
   _getHuiRoot() {
-    return document
-      .querySelector("home-assistant")?.shadowRoot
-      ?.querySelector("home-assistant-main")?.shadowRoot
-      ?.querySelector("ha-panel-lovelace")?.shadowRoot
-      ?.querySelector("hui-root");
+    return _getHuiRoot();
   }
 
 
