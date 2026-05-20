@@ -48,6 +48,20 @@ function _escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
+// parse a combined "dashboard/view" string into { dashboard, view }.
+// accepts: "dashboard/view", "/dashboard/view", "current/view", "view", "/view"
+function _parseDashboardViewString(value, currentDashboard) {
+  if (typeof value !== "string") return null;
+  const parts = value.trim().replace(/^\//, "").split("/").filter(Boolean);
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return { dashboard: currentDashboard, view: parts[0] };
+  if (parts.length === 2) {
+    const [dash, view] = parts;
+    return { dashboard: dash === "current" ? currentDashboard : dash, view };
+  }
+  return null;
+}
+
 class EmbeddedViewCard extends HTMLElement {
 
   // initializes the card instance, sets up shadow DOM and internal containers
@@ -268,7 +282,7 @@ class EmbeddedViewCard extends HTMLElement {
       effectiveView = this._config.view ?? this._config.view_path;
       if (!effectiveView && this._config.view_path_entity) {
         const viewpathentity = this._config.view_path_entity;
-        const viewpathentitystate = viewpathentity ? this._hass.states?.[viewpathentity] : undefined;
+        const viewpathentitystate = viewpathentity ? this._hass?.states?.[viewpathentity] : undefined;
         effectiveView = viewpathentitystate?.state || undefined;
       }
       if (!effectiveView) {
@@ -379,7 +393,10 @@ class EmbeddedViewCard extends HTMLElement {
     huiview.narrow = false;
     huiview.lovelace = lovelace;
     huiview.index = views.indexOf(view);
-    huiview.isStrategyView = false;
+    huiview.isStrategyView = !!view?.strategy;
+    if (view?.strategy) {
+      huiview.strategy = view.strategy;
+    }
     huiview.viewConfig = view;
 
     this._inner.innerHTML = "";
@@ -402,44 +419,29 @@ class EmbeddedViewCard extends HTMLElement {
 
   // fetch dashboard config  (only refresh when `force: true`)
   async _fetchLovelaceConfigWS(urlPath, { force = false } = {}) {
-    // return cached config if present and no force reload was requested
-    if (!force && this._wsConfigCache[urlPath]) {
-      return this._wsConfigCache[urlPath];
+    const cached = this._wsConfigCache[urlPath];
+    if (!force && cached) {
+      return Promise.resolve(cached);
     }
 
-    // fetch fresh config via WS and update cache
-    const config = await this._hass.callWS({ type: "lovelace/config", url_path: urlPath });
-    this._wsConfigCache[urlPath] = config;
-    return config;
+    const promise = this._hass.callWS({ type: "lovelace/config", url_path: urlPath })
+      .then(config => {
+        this._wsConfigCache[urlPath] = config;
+        return config;
+      })
+      .catch(err => {
+        delete this._wsConfigCache[urlPath];
+        throw new Error(`Failed to fetch dashboard config "${urlPath}": ${err.message}`);
+      });
+
+    this._wsConfigCache[urlPath] = promise;
+    return promise;
   }
 
 
   // parse a combined "dashboard/view" string.
   _parseTargetString(targetentitystate, currentDashboard) {
-    /* accepts:
-      "dashboard/view"
-      "/dashboard/view"
-      "current/view"     (uses current dashboard)
-      "view" or "/view"  (uses current dashboard)
-    */
-    if (typeof targetentitystate !== "string") return null;
-
-    const parts = targetentitystate.trim().split("/").filter(Boolean);
-    if (parts.length === 0) return null;
-
-    // only view provided -> current dashboard
-    if (parts.length === 1) {
-      return { dashboard: currentDashboard, view: parts[0] };
-    }
-
-    // dashboard and view provided
-    if (parts.length === 2) {
-      const [dash, view] = parts;
-      return { dashboard: (dash === "current" ? currentDashboard : dash), view };
-    }
-
-    // more than 2 parts are invalid
-    return null;
+    return _parseDashboardViewString(targetentitystate, currentDashboard);
   }
 
 
@@ -562,7 +564,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
     this._hass = hass;
     this._collectDashboards().then(() => {
       if (this._needsRender) this._safeRender();
-    });
+    }).catch(() => {});
   }
 
 
@@ -1220,15 +1222,7 @@ class EmbeddedViewCardEditor extends HTMLElement {
 
   // parse the entity state string into { dashboard, view }; supports "dashboard/view", "current/view", or just "view"
   _parsePreview(value, currentDashboard) {
-    if (typeof value !== "string") return null;
-    let s = value.trim();
-    if (!s) return null;
-    if (s.startsWith("/")) s = s.slice(1);
-    const parts = s.split("/").filter(Boolean);
-    if (parts.length === 1) return { dashboard: currentDashboard, view: parts[0] };
-    const [dash, view, ...rest] = parts;
-    if (!view || rest.length > 0) return null;
-    return { dashboard: dash === "current" ? currentDashboard : dash, view };
+    return _parseDashboardViewString(value, currentDashboard);
   }
 
 

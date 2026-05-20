@@ -29,6 +29,7 @@ This card was built to feel like a native part of Home Assistant – rendering v
 - **Static mode**: pick dashboard + view directly
 - **Dynamic mode**: use an entity (`input_text`) whose state is `dashboard/view`
 - **Hash mode**: switch views based on the URL hash (`#climate`, `#lights`, etc.)
+- **Strategy view support**: properly renders strategy-based views (home, sections, etc.)
 - Loop guard to prevent self-embedding
 - Optionally wrap content in `ha-card`
 - **Bleed mode**: remove default padding with adjustable margins
@@ -213,9 +214,11 @@ Each key (e.g., `climate`, `lights`) corresponds to a URL hash (`#climate`, `#li
 
 - Uses internal components like `hui-root` and `hui-view`  
   *(subject to change by Home Assistant core)*
-- Internal caching of WS configs for faster reloads
+- **Strategy views**: properly detects and renders strategy-based views (e.g., `home`, `sections` strategies) by passing the `strategy` config to `hui-view`
+- Internal caching of WS configs with deduplication for concurrent requests
 - Smarter re-rendering (only when dashboard/view changes)
 - Gracefully shows error messages when view is not found or misconfigured
+- User visibility rules are respected for all embedded views
 
 ---
 
@@ -224,7 +227,7 @@ Each key (e.g., `climate`, `lights`) corresponds to a URL hash (`#climate`, `#li
 Feel free to submit pull requests and suggestions.  
 Ideas for improvement:
 
-- Add safe recursive loop detection
+- Add safe recursive loop detection (cross-call chains)
 - Add mode "internal" where the embedded view could be changed with actions
 
 ---
